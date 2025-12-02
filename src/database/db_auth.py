@@ -1,0 +1,156 @@
+import bcrypt
+import logging
+import sqlite3
+from pathlib import Path
+from typing import Optional, Tuple
+from datetime import datetime
+from src.exceptions import AuthError, DatabaseError
+
+log = logging.getLogger(__name__)
+
+class Database_Auth:
+    def __init__(self, db_nome: str = "chat.db"):
+        self.db_nome = "db_auth.db"
+        log.info("Inicializando Database_Auth e criando tabelas...")
+        self.criar_tabela_usuarios()
+
+    def conectar(self) -> sqlite3.Connection:
+        raiz_projeto = Path(__file__).resolve().parents[2]
+        caminho_base = raiz_projeto / 'data'
+        caminho_base.mkdir(parents=True, exist_ok=True)
+
+        return sqlite3.connect(caminho_base / self.db_nome)
+
+    def criar_tabela_usuarios(self):
+        try:
+            with self.conectar() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS usuarios (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        usuario TEXT UNIQUE NOT NULL,
+                        hash_senha TEXT UNIQUE NOT NULL,
+                        email TEXT UNIQUE NOT NULL,
+                        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ultimo_login TIMESTAMP
+                    )
+                ''')
+                log.debug("Tabela 'usuarios' verificada/criada.")
+
+        except sqlite3.Error as e:
+            log.error("Falha ao criar tabela no SQLite 'usuarios': %s", e)
+            raise DatabaseError(f"Erro no banco de dados: %s", e)
+
+    def gerar_hash(self, senha: str) -> str:
+        senha_bytes = senha.encode('utf-8')
+
+        salt = bcrypt.gensalt()
+        hash_bytes = bcrypt.hashpw(senha_bytes, salt)
+
+        return hash_bytes.decode('utf-8')   
+
+    def verificar_senha(self, senha: str, hash_senha: str) -> bool:
+        senha_bytes = senha.encode('utf-8')
+        hash_bytes = hash_senha.encode('utf-8')
+
+        return bcrypt.checkpw(senha_bytes, hash_bytes)
+
+    def registrar_usuario(self, usuario: str, senha: str, email: str = ""):
+
+        # Validações:
+        if not usuario or len(usuario) < 3:
+            raise AuthError("Nome do usuário deve ter mínimo 3 caracteres")
+        if not senha or len(senha) < 6:
+            raise AuthError("A senha deve ter no mínimo 6 caracteres")
+
+        try:
+            with self.conectar() as conn:
+                cursor = conn.cursor()
+
+                # Verifica se o usuário já existe no banco de dados:
+                cursor.execute('SELECT id FROM usuarios WHERE usuario = ?', (usuario,))
+                if cursor.fetchone():
+                    raise AuthError("Usuário já existente!" )
+                
+                hash_senha = self.gerar_hash(senha)
+
+                # Insere o usuário no banco de dados:
+                cursor.execute('''
+                    INSERT INTO usuarios (usuario, hash_senha, email)
+                    VALUES (?, ?, ?)
+                    ''', (usuario, hash_senha, email))
+
+                log.info("Usuario %s registrado com sucesso", usuario)
+                return True
+            
+        except sqlite3.Error as e:
+            log.error("Usuario %s criado com sucesso: %s", usuario, e)
+            log.warning("Desfazendo o registro")
+            raise DatabaseError("Usuário não registrado")
+
+    def autenticar_usuario(self, usuario: str, senha: str) -> int:
+        try:
+            with self.conectar() as conn:
+                cursor = conn.cursor()
+
+                # Busca o usuário:
+                cursor.execute('''
+                    SELECT id, hash_senha FROM usuarios WHERE usuario = ?
+                    ''', (usuario,)) 
+
+                resultado = cursor.fetchone()
+
+                if not resultado:
+                    log.warning("Falha de login: O usuário %s não foi encontrado: ", usuario)
+                    raise AuthError("Usuario nao encontrado")
+                
+                user_id, hash_senha = resultado
+
+                if self.verificar_senha(senha, hash_senha): 
+
+                    # Atualiza o ultimo login.
+                    cursor.execute('''
+                        UPDATE usuarios
+                        SET ultimo_login = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        ''', (user_id,))
+                    
+                    log.info("Usuario %s está autenticado", usuario)
+                    return user_id
+
+                else:
+                    log.warning("Falha na autenticação do usuário!")
+                    raise AuthError("[Erro] Na verificação do usuário no banco de dados") 
+
+        except sqlite3.Error as e: 
+            log.error("[Erro] Falha no SQLite ao autenticar o usuário %s: %s", usuario, e)
+            raise DatabaseError(f"Retornando o login.", )
+
+    def obter_info(self, user_id: int) -> Optional[dict]:
+        try:
+            with self.conectar() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                SELECT id, usuario, email, criado_em, ultimo_login
+                FROM usuarios
+                WHERE id = ?
+                ''', (user_id,))
+
+                resultado = cursor.fetchone()
+
+                if resultado:
+                    return{
+                        'id': resultado[0],
+                        'usuario': resultado[1],
+                        'email': resultado[2],
+                        'criado_em': resultado[3],
+                        'ultimo_login': resultado[4]
+                    }
+
+                log.info("Id %s encontrado, Dict gerado", user_id)
+                return None
+
+        except sqlite3.Error as e:
+            log.error("Id %s não encontrado, Dict não criado: %s", user_id, e)

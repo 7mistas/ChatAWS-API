@@ -1,0 +1,43 @@
+import logging
+from src.database.db_auth import Database_Auth
+from src.exceptions import AuthError, DatabaseError
+from typing import Optional, Tuple
+
+log = logging.getLogger(__name__)
+
+class Autenticacao:
+    def __init__(self, db= None):
+        self.db_auth = Database_Auth()
+        self.usuario_logado: Optional[str] = None
+        self.id_logado: Optional[int] = None
+
+    def registrar(self, usuario: str, senha: str, email: str = "") -> Tuple[bool, str]:
+        self.db_auth.registrar_usuario(usuario, senha, email)
+
+    def login(self, usuario: str, senha: str) -> int:
+        user_id = self.db_auth.autenticar_usuario(usuario, senha)
+        log.debug("Tenando login para o Usuário: %s ID: %s", usuario, user_id)
+        self.id_logado = user_id
+        self.usuario_logado = usuario
+        log.info("Sessão iniciada para %s (ID: %s)", usuario, user_id)
+        return user_id
+
+    def logout(self):
+        if self.usuario_logado:
+            log.info(f"Usuario {self.usuario_logado} desconectado!")
+        else:
+            log.warning("Tentativa de logout sem usuario logado.")
+
+        self.id_logado = None
+        self.usuario_logado = None
+
+    def esta_logado(self) -> bool:
+        return self.usuario_logado is not None
+ 
+    def get_usuario_atual(self) -> Optional[str]:
+        return self.usuario_logado
+
+    def exibir_info_usuario(self, user_id) -> Optional[dict]:
+        if user_id:
+           return self.db_auth.obter_info(user_id)
+        return None
