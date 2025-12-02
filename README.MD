@@ -10,7 +10,7 @@
 
 ### 🚀 Quick Start (Rodar Agora)
 
-[![Run with Docker](.github/assets/docker-icon.jpg)](#-como-rodar-com-docker)
+[![Run with Docker](.github/assets/docker-icon.png)](#-como-rodar-com-docker)
 
 ---
 
